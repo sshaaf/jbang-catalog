@@ -1,0 +1,9 @@
+{
+    "catalogs": {},
+    "aliases": {
+      "png2jpeg": {
+        "script-ref": "src/png2jpeg.java",
+        "description": "Converts PNG images to JPEG format with specified quality, uses Standard Java libraries."
+      }
+    }
+  }
