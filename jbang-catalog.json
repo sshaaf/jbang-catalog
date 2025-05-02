@@ -4,6 +4,10 @@
       "png2jpeg": {
         "script-ref": "src/png2jpeg.java",
         "description": "Converts PNG images to JPEG format with specified quality, uses Standard Java libraries."
+      }, 
+      "CheckK8sNodeAvailability": {
+        "script-ref": "src/CheckK8sNodeAvailability.java",
+        "description": "JBang script to check Kubernetes node availability for a pending pod based on taints/tolerations and memory requests vs. allocatable resources."
       }
     }
   }
