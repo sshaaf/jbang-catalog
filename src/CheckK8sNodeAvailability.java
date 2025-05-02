@@ -3,6 +3,15 @@
 //DEPS info.picocli:picocli:4.7.6
 //MAIN CheckK8sNodeAvailability
 //JAVA 21+
+//DEPS ch.qos.logback:logback-classic:1.5.18
+
+/**
+ * JBang script to check Kubernetes node availability for a pending pod
+ * based on taints/tolerations and memory requests vs. allocatable resources.
+ * Uses java.util.logging (plain text).
+ * This script is intended for educational purposes and generated using an LLM.
+ */
+
 
 import io.fabric8.kubernetes.api.model.*;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -29,12 +38,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-/**
- * JBang script to check Kubernetes node availability for a pending pod
- * based on taints/tolerations and memory requests vs. allocatable resources.
- * Uses java.util.logging (plain text).
- * This script is intended for educational purposes and generated using an LLM.
- */
 
 @Command(name = "CheckK8sNodeAvailability",
          mixinStandardHelpOptions = true,
