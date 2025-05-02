@@ -7,7 +7,6 @@ import io.fabric8.kubernetes.api.model.*;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.KubernetesClientException;
-// Removed unused import: import io.fabric8.kubernetes.client.dsl.PodResource;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -19,6 +18,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.logging.ConsoleHandler; // Import JUL ConsoleHandler
+import java.util.logging.Formatter;     // Import JUL Formatter
+import java.util.logging.Handler;       // Import JUL Handler
+import java.util.logging.Level;         // Import JUL Level
+import java.util.logging.LogRecord;     // Import JUL LogRecord
+import java.util.logging.Logger;        // Import JUL Logger
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -26,12 +31,45 @@ import java.util.stream.Collectors;
 /**
  * JBang script to check Kubernetes node availability for a pending pod
  * based on taints/tolerations and memory requests vs. allocatable resources.
+ * Uses java.util.logging (plain text).
+ * This script is intended for educational purposes and generated using an LLM.
  */
+
 @Command(name = "CheckK8sNodeAvailability",
          mixinStandardHelpOptions = true,
-         version = "CheckK8sNodeAvailability 1.4", // Increment version
-         description = "Checks Kubernetes node availability for a pending pod based on taints and memory requests.")
+         version = "CheckK8sNodeAvailability 1.11", // Increment version
+         description = "Checks Kubernetes node availability for a pending pod based on taints and memory requests (JUL Logging, Plain Text).")
 public class CheckK8sNodeAvailability implements Callable<Integer> {
+
+    // Initialize Java Util Logger
+    private static final Logger LOGGER = Logger.getLogger(CheckK8sNodeAvailability.class.getName());
+
+    // Static block to configure logger for simple, unformatted console output
+    static {
+        // Remove default handlers from *this* logger instance if they exist
+        for (Handler handler : LOGGER.getHandlers()) {
+             LOGGER.removeHandler(handler);
+        }
+        // Add a new console handler with a simple formatter
+        ConsoleHandler consoleHandler = new ConsoleHandler();
+        consoleHandler.setLevel(Level.ALL); // Handle all levels
+        consoleHandler.setFormatter(new SimpleConsoleFormatter());
+        LOGGER.addHandler(consoleHandler);
+        LOGGER.setLevel(Level.INFO); // Set the default log level for this logger
+        LOGGER.setUseParentHandlers(false); // Don't propagate to root logger handlers
+    }
+
+    /**
+     * Simple Formatter to just output the log message (plain text).
+     */
+    static class SimpleConsoleFormatter extends Formatter {
+        @Override
+        public String format(LogRecord record) {
+            // Just return the message, add a newline character
+            return formatMessage(record) + "\n";
+        }
+    }
+
 
     @Parameters(index = "0", description = "Name of the pending pod.")
     private String podName;
@@ -40,7 +78,6 @@ public class CheckK8sNodeAvailability implements Callable<Integer> {
     private String namespace;
 
     // --- Constants for Memory Conversion ---
-    // Using BigDecimal for precision, base unit Ki
     private static final BigDecimal KIB_IN_BYTES = new BigDecimal("1024");
     private static final BigDecimal MIB_IN_KIB = new BigDecimal("1024");
     private static final BigDecimal GIB_IN_KIB = MIB_IN_KIB.multiply(new BigDecimal("1024"));
@@ -54,9 +91,9 @@ public class CheckK8sNodeAvailability implements Callable<Integer> {
 
     // --- Helper Function: Parse Memory Units ---
     /**
-     * Parses Kubernetes memory strings (e.g., '1Gi', '500Mi', '1024Ki')
-     * into Kibibytes (KiB) using Regex.
+     * Parses Kubernetes memory strings into Kibibytes (KiB) using Regex.
      * Returns a BigDecimal representing KiB or BigDecimal.ZERO if parsing fails.
+     * Logs warnings using JUL.
      */
     public static BigDecimal parseMemoryToKib(String memStr) {
         if (memStr == null || memStr.isEmpty()) {
@@ -64,15 +101,13 @@ public class CheckK8sNodeAvailability implements Callable<Integer> {
         }
         Matcher matcher = MEMORY_PATTERN.matcher(memStr.trim());
         if (!matcher.matches()) {
-            System.err.printf("Warning: Could not parse memory string format '%s'. Treating as 0 KiB%n", memStr);
+            LOGGER.warning(String.format("Could not parse memory string format '%s'. Treating as 0 KiB", memStr));
             return BigDecimal.ZERO;
         }
 
         try {
             BigDecimal amount = new BigDecimal(matcher.group(1));
             String unit = matcher.group(3); // Unit part (e.g., "Ki", "Mi", "G", "")
-
-            // Normalize unit to expected format (e.g., handle case insensitivity if needed)
             unit = (unit == null) ? "" : unit; // Ensure unit is not null
 
             switch (unit) {
@@ -82,24 +117,19 @@ public class CheckK8sNodeAvailability implements Callable<Integer> {
                 case "Ti": return amount.multiply(TIB_IN_KIB);
                 case "Pi": return amount.multiply(PIB_IN_KIB);
                 case "Ei": return amount.multiply(EIB_IN_KIB);
-                // Handle SI units
                 case "k": return amount.multiply(new BigDecimal("1000")).divide(KIB_IN_BYTES, 0, RoundingMode.DOWN);
                 case "M": return amount.multiply(new BigDecimal("1000000")).divide(KIB_IN_BYTES, 0, RoundingMode.DOWN);
                 case "G": return amount.multiply(new BigDecimal("1000000000")).divide(KIB_IN_BYTES, 0, RoundingMode.DOWN);
-                // Handle base unit (bytes) - assume bytes if no unit
-                case "":
-                    // Check if the original string was just a number (implying bytes)
-                    // Note: K8s usually provides units, but handle this defensively.
-                    return amount.divide(KIB_IN_BYTES, 0, RoundingMode.DOWN);
+                case "": return amount.divide(KIB_IN_BYTES, 0, RoundingMode.DOWN);
                 default:
-                    System.err.printf("Warning: Unrecognized memory unit '%s' in '%s'. Assuming bytes and converting to KiB.%n", unit, memStr);
-                    return amount.divide(KIB_IN_BYTES, 0, RoundingMode.DOWN); // Treat unrecognized as bytes
+                    LOGGER.warning(String.format("Unrecognized memory unit '%s' in '%s'. Assuming bytes and converting to KiB.", unit, memStr));
+                    return amount.divide(KIB_IN_BYTES, 0, RoundingMode.DOWN);
             }
         } catch (NumberFormatException e) {
-             System.err.printf("Warning: Could not parse numeric value in memory string '%s'. Treating as 0 KiB%n", memStr);
+             LOGGER.warning(String.format("Could not parse numeric value in memory string '%s'. Treating as 0 KiB", memStr));
              return BigDecimal.ZERO;
-        } catch (Exception e) { // Catch other unexpected errors
-             System.err.printf("Warning: Unexpected error parsing memory string '%s': %s. Treating as 0 KiB%n", memStr, e.getMessage());
+        } catch (Exception e) {
+             LOGGER.log(Level.WARNING, String.format("Unexpected error parsing memory string '%s'. Treating as 0 KiB", memStr), e);
              return BigDecimal.ZERO;
         }
     }
@@ -110,250 +140,223 @@ public class CheckK8sNodeAvailability implements Callable<Integer> {
      * Returns true if tolerated, false otherwise.
      */
     public static boolean checkToleration(Taint taint, List<Toleration> podTolerations) {
-        if (podTolerations == null) {
-            return false;
-        }
+        if (podTolerations == null) return false;
         for (Toleration toleration : podTolerations) {
-            // Check key match (toleration key is null means wildcard)
             boolean keyMatch = toleration.getKey() == null || toleration.getKey().equals(taint.getKey());
-
-            // Check effect match (toleration effect is null means wildcard for effect)
             boolean effectMatch = toleration.getEffect() == null || toleration.getEffect().equals(taint.getEffect());
-
-            // Check operator
             boolean operatorMatch = false;
-            String operator = toleration.getOperator(); // Can be null, defaults to "Equal"
-
+            String operator = toleration.getOperator();
             if ("Exists".equals(operator)) {
-                // 'Exists' operator only requires key and effect match (value is ignored)
-                // Key must exist on the taint and match toleration key if specified.
                 operatorMatch = taint.getKey() != null && (toleration.getKey() == null || toleration.getKey().equals(taint.getKey()));
-            } else { // Operator is "Equal" (explicitly or by default)
-                // Check if values match (both null or equal)
+            } else { // Operator is "Equal" (default)
                 operatorMatch = (toleration.getValue() == null && taint.getValue() == null) ||
                                 (toleration.getValue() != null && toleration.getValue().equals(taint.getValue()));
             }
-
-            // If all conditions match for this toleration, the taint is tolerated
-            if (keyMatch && effectMatch && operatorMatch) {
-                // Check tolerationSeconds if applicable (NoExecute effect)
-                if ("NoExecute".equals(taint.getEffect()) && toleration.getTolerationSeconds() != null) {
-                    // Basic check assumes toleration is valid if present.
-                }
-                return true; // Found a matching toleration
-            }
+            if (keyMatch && effectMatch && operatorMatch) return true;
         }
-        return false; // No toleration matched
+        return false;
     }
 
 
     @Override
-    public Integer call() { // Main logic moved into call() for Picocli
-        System.out.printf("Checking scheduling prerequisites for pod '%s' in namespace '%s'...%n%n", podName, namespace);
+    public Integer call() { // Main logic
+        // Use JUL logger for output
+        LOGGER.info(String.format("Checking scheduling prerequisites for pod '%s' in namespace '%s'...\n", podName, namespace));
+        // LOGGER.info(""); // Add newline via empty log or handle in formatter
 
-        // Use try-with-resources for the Kubernetes client
         try (KubernetesClient client = new KubernetesClientBuilder().build()) {
 
             // --- 1. Get Pending Pod Details ---
             Pod pod = client.pods().inNamespace(namespace).withName(podName).get();
             if (pod == null) {
-                System.err.printf("Error: Pod '%s' not found in namespace '%s'.%n", podName, namespace);
-                return 1; // Indicate error
+                LOGGER.severe(String.format("Error: Pod '%s' not found in namespace '%s'.", podName, namespace));
+                return 1;
             }
 
-            // Calculate the largest memory request among containers
+            // Calculate largest memory request
             BigDecimal podMemoryRequestKib = BigDecimal.ZERO;
-            List<Container> containers = Optional.ofNullable(pod.getSpec().getContainers()).orElse(List.of()); // Handle null containers list
+            List<Container> containers = Optional.ofNullable(pod.getSpec().getContainers()).orElse(List.of());
             if (!containers.isEmpty()) {
-                System.out.println("Pod Memory Requests per Container:");
+                LOGGER.info("Pod Memory Requests per Container:");
                 for (Container container : containers) {
                     String memReqStr = "N/A";
                     BigDecimal reqKib = BigDecimal.ZERO;
                     ResourceRequirements resources = container.getResources();
-                    // Check requests map exists and contains memory key
                     if (resources != null && resources.getRequests() != null && resources.getRequests().containsKey("memory")) {
                         Quantity memQuantity = resources.getRequests().get("memory");
-                        if (memQuantity != null) { // Ensure Quantity object is not null
-                           // Get the string representation (e.g., "512Mi") to parse manually
+                        if (memQuantity != null) {
                            memReqStr = memQuantity.toString();
-                           reqKib = parseMemoryToKib(memReqStr); // Use our regex helper
+                           reqKib = parseMemoryToKib(memReqStr);
                            if (reqKib.compareTo(podMemoryRequestKib) > 0) {
-                               podMemoryRequestKib = reqKib; // Keep track of the largest request
+                               podMemoryRequestKib = reqKib;
                            }
                         } else {
-                             memReqStr = "<null quantity>"; // Indicate if the map entry was null
+                             memReqStr = "<null quantity>";
                         }
                     }
-                    System.out.printf("  - Container '%s': %s (%s KiB)%n", container.getName(), memReqStr, reqKib.toBigInteger());
+                    LOGGER.info(String.format("  - Container '%s': %s (%s KiB)", container.getName(), memReqStr, reqKib.toBigInteger()));
                 }
             }
 
             if (podMemoryRequestKib.compareTo(BigDecimal.ZERO) == 0) {
-                System.out.printf("%nWarning: Pod '%s' has no memory requests defined. Skipping memory checks.%n", podName);
+                LOGGER.warning(String.format("%nWarning: Pod '%s' has no memory requests defined. Skipping memory checks.", podName));
             } else {
-                System.out.printf("%nPod '%s' requires %s KiB of memory (largest container request).%n", podName, podMemoryRequestKib.toBigInteger());
+                LOGGER.info(String.format("%nPod '%s' requires %s KiB of memory (largest container request).", podName, podMemoryRequestKib.toBigInteger()));
             }
 
             // Get Pod Tolerations
             List<Toleration> podTolerations = Optional.ofNullable(pod.getSpec().getTolerations()).orElse(new ArrayList<>());
-            System.out.printf("Pod Tolerations: %s%n", podTolerations.isEmpty() ? "None" : podTolerations.stream().map(Object::toString).collect(Collectors.joining(", ")));
+            LOGGER.info(String.format("Pod Tolerations: %s", podTolerations.isEmpty() ? "None" : podTolerations.stream().map(Object::toString).collect(Collectors.joining(", "))));
 
 
             // --- 2. Get All Nodes ---
             NodeList nodeList = client.nodes().list();
-            List<Node> nodes = Optional.ofNullable(nodeList.getItems()).orElse(List.of()); // Handle null items list
+            List<Node> nodes = Optional.ofNullable(nodeList.getItems()).orElse(List.of());
             int totalNodes = nodes.size();
-            System.out.printf("%nFound %d nodes in the cluster.%n", totalNodes);
+            LOGGER.info(String.format("%nFound %d nodes in the cluster.", totalNodes));
 
             // --- 3. Check Each Node ---
             int availableNodesCount = 0;
             List<String> rejectedByTaint = new ArrayList<>();
             List<String> rejectedByMemory = new ArrayList<>();
-            List<String> nodesWithIssues = new ArrayList<>(); // For nodes where checks couldn't complete
+            List<String> nodesWithIssues = new ArrayList<>();
 
-            System.out.println("\n--- Node Analysis ---");
+            LOGGER.info("\n--- Node Analysis ---");
             for (Node node : nodes) {
                 String nodeName = node.getMetadata().getName();
-                System.out.printf("%nAnalyzing Node: %s%n", nodeName);
+                LOGGER.info(String.format("%nAnalyzing Node: %s", nodeName));
                 boolean isRejectedByTaint = false;
                 boolean isRejectedByMemory = false;
-                boolean checkIncomplete = false; // Flag if checks couldn't finish for this node
+                boolean checkIncomplete = false;
 
                 // a) Check Taints
                 List<Taint> nodeTaints = Optional.ofNullable(node.getSpec().getTaints()).orElse(new ArrayList<>());
                 if (!nodeTaints.isEmpty()) {
-                     System.out.printf("  Taints: %s%n", nodeTaints.stream()
+                     LOGGER.info(String.format("  Taints: %s", nodeTaints.stream()
                                                                  .map(t -> String.format("%s=%s:%s", t.getKey(), t.getValue(), t.getEffect()))
-                                                                 .collect(Collectors.joining(", ")));
+                                                                 .collect(Collectors.joining(", "))));
                     for (Taint taint : nodeTaints) {
-                        // Only consider taints that prevent scheduling by default
                         if ("NoSchedule".equals(taint.getEffect()) || "NoExecute".equals(taint.getEffect())) {
                             if (!checkToleration(taint, podTolerations)) {
                                 String reason = String.format("Untolerated taint '%s=%s:%s'", taint.getKey(), taint.getValue(), taint.getEffect());
                                 rejectedByTaint.add(String.format("%s (%s)", nodeName, reason));
                                 isRejectedByTaint = true;
-                                break; // One untolerated taint is enough
+                                break;
                             }
                         }
                     }
                 } else {
-                    System.out.println("  Taints: None");
+                    LOGGER.info("  Taints: None");
                 }
 
                 if (isRejectedByTaint) {
-                    System.out.println("  Result: Rejected due to taint.");
-                    continue; // Move to the next node
+                    LOGGER.info("  Result: Rejected due to taint.");
+                    continue;
                 }
 
-                // b) Check Memory (only if pod requests memory and not rejected by taint)
+                // b) Check Memory
                 if (podMemoryRequestKib.compareTo(BigDecimal.ZERO) > 0) {
-                    // Get Node Allocatable Memory
                     String allocatableMemoryStr = Optional.ofNullable(node.getStatus())
                                                           .map(NodeStatus::getAllocatable)
                                                           .map(m -> m.get("memory"))
-                                                          .map(Quantity::toString) // Get string like "15222852Ki"
+                                                          .map(Quantity::toString)
                                                           .orElse("0");
-                    BigDecimal allocatableMemoryKib = parseMemoryToKib(allocatableMemoryStr); // Use our regex helper
-                    System.out.printf("  Allocatable Memory: %s (%s KiB)%n", allocatableMemoryStr, allocatableMemoryKib.toBigInteger());
+                    BigDecimal allocatableMemoryKib = parseMemoryToKib(allocatableMemoryStr);
+                    LOGGER.info(String.format("  Allocatable Memory: %s (%s KiB)", allocatableMemoryStr, allocatableMemoryKib.toBigInteger()));
 
-                    // Calculate Allocated Memory Requests on the node
                     BigDecimal allocatedMemoryRequestKib = BigDecimal.ZERO;
                     try {
-                        // List pods running on this specific node (excluding completed/failed)
-                        // *** Use ListOptions instead of withFieldSelector ***
                         String fieldSelector = String.format("spec.nodeName=%s,status.phase!=Failed,status.phase!=Succeeded", nodeName);
-                        ListOptions listOptions = new ListOptionsBuilder()
-                                .withFieldSelector(fieldSelector)
-                                .build();
-                        PodList nodePods = client.pods().inAnyNamespace().list(listOptions); // Pass options to list()
+                        ListOptions listOptions = new ListOptionsBuilder().withFieldSelector(fieldSelector).build();
+                        PodList nodePods = client.pods().inAnyNamespace().list(listOptions);
 
-                        for (Pod npod : Optional.ofNullable(nodePods.getItems()).orElse(List.of())) { // Handle null items
+                        for (Pod npod : Optional.ofNullable(nodePods.getItems()).orElse(List.of())) {
                             if (npod.getSpec().getContainers() != null) {
                                 for (Container container : npod.getSpec().getContainers()) {
                                     if (container.getResources() != null && container.getResources().getRequests() != null) {
                                         Quantity memReq = container.getResources().getRequests().get("memory");
                                         if (memReq != null) {
-                                            // Parse the request string manually
                                             allocatedMemoryRequestKib = allocatedMemoryRequestKib.add(parseMemoryToKib(memReq.toString()));
                                         }
                                     }
                                 }
                             }
                         }
-                        System.out.printf("  Requested by Existing Pods: %s KiB%n", allocatedMemoryRequestKib.toBigInteger());
+                        LOGGER.info(String.format("  Requested by Existing Pods: %s KiB", allocatedMemoryRequestKib.toBigInteger()));
 
                     } catch (KubernetesClientException e) {
                         String reason = String.format("API Error listing pods for memory calculation: %s", e.getMessage());
-                        System.err.printf("  Warning: %s%n", reason);
+                        LOGGER.log(Level.WARNING, String.format("  Warning on node %s: %s", nodeName, reason), e);
                         nodesWithIssues.add(String.format("%s (%s)", nodeName, reason));
-                        checkIncomplete = true; // Mark check as incomplete for this node
-                    } catch (Exception e) { // Catch potential errors during pod processing
-                         String reason = String.format("Error processing pods on node: %s", e.getMessage());
-                         System.err.printf("  Warning: %s%n", reason);
+                        checkIncomplete = true;
+                    } catch (Exception e) {
+                         String reason = String.format("Error processing pods on node %s: %s", nodeName, e.getMessage());
+                         LOGGER.log(Level.WARNING, String.format("  Warning: %s", reason), e);
                          nodesWithIssues.add(String.format("%s (%s)", nodeName, reason));
                          checkIncomplete = true;
                     }
 
-
-                    // Only proceed with memory comparison if calculation was successful
                     if (!checkIncomplete) {
                         BigDecimal availableMemoryKib = allocatableMemoryKib.subtract(allocatedMemoryRequestKib);
-                        System.out.printf("  Available Memory (Allocatable - Requested): %s KiB%n", availableMemoryKib.toBigInteger());
+                        LOGGER.info(String.format("  Available Memory (Allocatable - Requested): %s KiB", availableMemoryKib.toBigInteger()));
 
-                        // Compare available memory with the pod's request
                         if (availableMemoryKib.compareTo(podMemoryRequestKib) < 0) {
                             String reason = String.format("Insufficient memory (Needs %s KiB, Available %s KiB)",
                                                           podMemoryRequestKib.toBigInteger(), availableMemoryKib.toBigInteger());
                             rejectedByMemory.add(String.format("%s (%s)", nodeName, reason));
                             isRejectedByMemory = true;
-                            System.out.println("  Result: Rejected due to memory.");
+                            LOGGER.info("  Result: Rejected due to memory.");
                         }
                     } else {
-                         System.out.println("  Result: Check Incomplete (due to pod listing error).");
+                         LOGGER.info("  Result: Check Incomplete (due to pod listing error).");
                     }
-
                 } // End memory check block
 
                 // c) Final Node Status
                 if (!isRejectedByTaint && !isRejectedByMemory && !checkIncomplete) {
                     availableNodesCount++;
-                    System.out.println("  Result: Potentially Available.");
+                    LOGGER.info("  Result: Potentially Available.");
                 } else if (checkIncomplete && !isRejectedByTaint) {
-                    // If check was incomplete but not rejected by taint, don't count as available
-                     System.out.println("  Result: Check Incomplete.");
+                     LOGGER.info("  Result: Check Incomplete.");
                 }
-
-
             } // End node loop
 
             // --- 4. Summary ---
-            System.out.println("\n--- Scheduling Check Summary ---");
-            System.out.printf("Pod: %s/%s%n", namespace, podName);
-            System.out.printf("Memory Required (Largest Container): %s KiB%n", podMemoryRequestKib.toBigInteger());
-            System.out.println("-".repeat(30));
-            System.out.printf("Total Nodes Checked: %d%n", totalNodes);
-            System.out.printf("Nodes Rejected (Untolerated Taint): %d%n", rejectedByTaint.size());
-            rejectedByTaint.forEach(s -> System.out.println("  - " + s));
-            System.out.printf("Nodes Rejected (Insufficient Memory): %d%n", rejectedByMemory.size());
-            rejectedByMemory.forEach(s -> System.out.println("  - " + s));
-            if (!nodesWithIssues.isEmpty()) {
-                System.out.printf("Nodes With Check Issues (e.g., API errors): %d%n", nodesWithIssues.size());
-                nodesWithIssues.forEach(s -> System.out.println("  - " + s));
-            }
-            System.out.printf("%nPotentially Available Nodes (passed these checks): %d%n", availableNodesCount);
-            System.out.println("\nDisclaimer: This script checks only taints/tolerations and memory requests.");
-            System.out.println("Actual scheduling depends on other factors like node selectors, affinity, CPU, volumes, etc.");
+            // Use logger for summary without colors
+            String summary = String.format(
+                "%n--- Scheduling Check Summary ---%n" +
+                "Pod: %s/%s%n" +
+                "Memory Required (Largest Container): %s KiB%n" +
+                "-".repeat(30) + "%n" +
+                "Total Nodes Checked: %d%n" +
+                "Nodes Rejected (Untolerated Taint): %d%n%s%n" +
+                "Nodes Rejected (Insufficient Memory): %d%n%s%n" +
+                "%s" +
+                "%nPotentially Available Nodes (passed these checks): %d%n" +
+                "%nDisclaimer: This script checks only taints/tolerations and memory requests.%n" +
+                "Actual scheduling depends on other factors like node selectors, affinity, CPU, volumes, etc.",
+                namespace, podName,
+                podMemoryRequestKib.toBigInteger(),
+                totalNodes,
+                rejectedByTaint.size(),
+                rejectedByTaint.isEmpty() ? "" : rejectedByTaint.stream().map(s -> "  - " + s).collect(Collectors.joining("\n")),
+                rejectedByMemory.size(),
+                rejectedByMemory.isEmpty() ? "" : rejectedByMemory.stream().map(s -> "  - " + s).collect(Collectors.joining("\n")),
+                nodesWithIssues.isEmpty() ? "" : String.format("Nodes With Check Issues (e.g., API errors): %d%n%s%n",
+                                                                nodesWithIssues.size(),
+                                                                nodesWithIssues.stream().map(s -> "  - " + s).collect(Collectors.joining("\n"))),
+                availableNodesCount
+            );
+            LOGGER.info(summary);
 
 
         } catch (KubernetesClientException e) {
-            System.err.println("\nError: Kubernetes API interaction failed.");
-            System.err.println("  Reason: " + e.getMessage());
-            // e.printStackTrace(); // Uncomment for full stack trace if needed
-            return 1; // Indicate error
+            LOGGER.log(Level.SEVERE, "\nError: Kubernetes API interaction failed.", e);
+            return 1;
         } catch (Exception e) {
-            System.err.println("\nAn unexpected error occurred: " + e.getMessage());
-            e.printStackTrace();
-            return 1; // Indicate error
+            LOGGER.log(Level.SEVERE, "\nAn unexpected error occurred.", e);
+            // e.printStackTrace(); // Optionally keep for debugging unexpected errors
+            return 1;
         }
 
         return 0; // Indicate success
