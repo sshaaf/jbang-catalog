@@ -2,6 +2,7 @@
 //DEPS io.fabric8:kubernetes-client:6.10.0
 //DEPS info.picocli:picocli:4.7.6
 //MAIN CheckK8sNodeAvailability
+//JAVA 21+
 
 import io.fabric8.kubernetes.api.model.*;
 import io.fabric8.kubernetes.client.KubernetesClient;
